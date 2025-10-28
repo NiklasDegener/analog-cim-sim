@@ -107,6 +107,30 @@ class TestAnalogMapping(unittest.TestCase):
         acs_int.mvm(res, vec, mat, m_matrix, n_matrix)
         np.testing.assert_array_equal(res, np.array([10241, 121, -1386], dtype=np.int32))
 
+    # This is the test of mapping 4
+    def test_mmm_analog_I_UINT_W_DIFF(self):
+        m_matrix = 3
+        k_matrix = 2
+        n_matrix = 3
+        mat_A = np.array([4, -7, 1, 0, 8, -1], dtype=np.int32)
+        mat_B = np.array([10, 5, 2, 6, 0, 9], dtype=np.int32)
+        res = np.array([1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
+
+        acs_int.set_config(
+            os.path.abspath(f"{repo_path}/cpp/test/lib/configs/digital/I_UINT_W_DIFF.json"))
+        acs_int.cpy(mat_A, m_matrix, k_matrix)
+        acs_int.mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix)
+        np.testing.assert_array_equal(res, np.array([-1, 21, -54, 11, 6, 3, 75, 41, 8], dtype=np.int32))
+        
+        # Check that mvm via mmm is also correct
+        n_matrix = 1
+        mat = np.array([100, -32, 1, 0, -12, 1], dtype=np.int32)
+        vec = np.array([120, 55], dtype=np.int32)
+        res = np.array([1, 1, -1], dtype=np.int32)
+        acs_int.cpy(mat, m_matrix, k_matrix)
+        acs_int.mmm(res, mat, vec, m_matrix, k_matrix, n_matrix)
+        np.testing.assert_array_equal(res, np.array([10241, 121, -1386], dtype=np.int32))
+
     def test_analog_I_UINT_W_OFFS(self):
         m_matrix = 3
         n_matrix = 2

@@ -28,6 +28,10 @@ class MapperIntIV : public Mapper {
                int32_t m_matrix, int32_t n_matrix) override;
     void a_mvm(int32_t *res, const int32_t *vec, const int32_t *mat,
                int32_t m_matrix, int32_t n_matrix) override;
+    void d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+               int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) override;
+    void a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+               int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) override;
 
   private:
     // Temporary data for MVM
