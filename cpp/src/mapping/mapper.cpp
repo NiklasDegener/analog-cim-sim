@@ -444,6 +444,16 @@ int Mapper::rd_cell_based_refresh(std::shared_ptr<ReadDisturb> rd_model) {
     return refresh_count;
 }
 
+void Mapper::d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                       int32_t m_matrix, int32_t n_matrix, int32_t k_matrix){
+    throw std::runtime_error("Digital MMM not implemented for chosen mapping!");
+}
+
+void Mapper::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                       int32_t m_matrix, int32_t n_matrix, int32_t k_matrix){
+    throw std::runtime_error("Analog MMM not implemented for chosen mapping!");
+}
+
 bool Mapper::is_diff_weight_mapping() const { return is_diff_weight_mapping_; }
 
 } // namespace nq

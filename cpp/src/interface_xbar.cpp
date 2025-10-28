@@ -90,6 +90,27 @@ extern "C" EXPORT_API int32_t update_config(const char *json_config,
     return 0;
 }
 
+extern "C" EXPORT_API int32_t exe_mmm(int32_t *res, int32_t *mat_A, int32_t *mat_B, int32_t m_matrix, int32_t k_matrix, int32_t n_matrix,
+                                      const char *l_name = "Unknown") {
+#ifdef DEBUG_MODE
+    std::cout << "Matrix-matrix multiplication" << std::endl;
+#endif
+
+    if (xbar == nullptr) {
+        std::cerr << "Error: Crossbar is not initialized. Please call "
+                     "set_config() first."
+                  << std::endl;
+        return -1;
+    }
+    if (m_matrix > CFG.M || n_matrix > CFG.N) {
+        std::cerr << "Error: Matrix dimensions exceed the crossbar size."
+                  << std::endl;
+        return -1;
+    }
+    xbar->mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix);
+    return 0;
+}
+
 extern "C" EXPORT_API int32_t exe_mvm(int32_t *res, int32_t *vec, int32_t *mat,
                                       int32_t m_matrix, int32_t n_matrix,
                                       const char *l_name = "Unknown") {
@@ -277,6 +298,22 @@ int32_t exe_mvm_pb(pybind11::array_t<int32_t> res,
     int32_t *mat_ptr = static_cast<int32_t *>(mat_buffer.ptr);
 
     xbar->mvm(res_ptr, vec_ptr, mat_ptr, m_matrix, n_matrix);
+    return 0;
+}
+
+int32_t exe_mmm_pb(pybind11::array_t<int32_t> res,
+                   pybind11::array_t<int32_t> mat_A,
+                   pybind11::array_t<int32_t> mat_B, int32_t m_matrix,
+                   int32_t k_matrix, int32_t n_matrix) {
+    auto res_buffer = res.request();
+    auto mat_A_buffer = mat_A.request();
+    auto mat_B_buffer = mat_B.request();
+
+    int32_t *res_ptr = static_cast<int32_t *>(res_buffer.ptr);
+    int32_t *mat_A_ptr = static_cast<int32_t *>(mat_A_buffer.ptr);
+    int32_t *mat_B_ptr = static_cast<int32_t *>(mat_B_buffer.ptr);
+
+    xbar->mmm(res_ptr, mat_A_ptr, mat_B_ptr, m_matrix, k_matrix, n_matrix);
     return 0;
 }
 
@@ -472,6 +509,7 @@ EXPORT_API const std::vector<std::vector<uint64_t>> &get_consecutive_reads_m() {
 PYBIND11_MODULE(acs_int, m) {
     m.def("cpy", &cpy_mtrx_pb, "Copy matrix to crossbar.");
     m.def("mvm", &exe_mvm_pb, "Execute matrix-vector multiplication.");
+    m.def("mmm", &exe_mmm_pb, "Execute matrix-vector multiplication.");
     m.def("set_config", &set_config, "Set a config for the crossbar.");
     m.def("update_config", &update_config_pb,
           "Update configuration from JSON string.");
