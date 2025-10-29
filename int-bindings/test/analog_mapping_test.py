@@ -66,7 +66,7 @@ class TestAnalogMapping(unittest.TestCase):
         res = np.array([1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
 
         acs_int.set_config(
-            os.path.abspath(f"{repo_path}/cpp/test/lib/configs/digital/I_OFFS_W_DIFF.json"))
+            os.path.abspath(f"{repo_path}/cpp/test/lib/configs/analog/I_OFFS_W_DIFF.json"))
         acs_int.cpy(mat_A, m_matrix, k_matrix)
         acs_int.mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix)
         np.testing.assert_array_equal(res, np.array([3, 21, -54, -9, 6, 3, -73, 41, 8], dtype=np.int32))
@@ -117,7 +117,7 @@ class TestAnalogMapping(unittest.TestCase):
         res = np.array([1, 1, 1, 1, 1, 1, 1, 1, 1], dtype=np.int32)
 
         acs_int.set_config(
-            os.path.abspath(f"{repo_path}/cpp/test/lib/configs/digital/I_UINT_W_DIFF.json"))
+            os.path.abspath(f"{repo_path}/cpp/test/lib/configs/analog/I_UINT_W_DIFF.json"))
         acs_int.cpy(mat_A, m_matrix, k_matrix)
         acs_int.mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix)
         np.testing.assert_array_equal(res, np.array([-1, 21, -54, 11, 6, 3, 75, 41, 8], dtype=np.int32))
