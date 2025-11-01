@@ -25,7 +25,7 @@ if (COVERAGE)
     set(CMAKE_CXX_COMPILER g++)
 endif()
 
-project(analog-cim-sim)
+project(analog-cim-sim LANGUAGES CXX CUDA)
 
 # Include json
 set(JSON_BuildTests OFF CACHE INTERNAL "")
@@ -63,6 +63,11 @@ if(BUILD_LIB_CB_EMU)
     install(TARGETS acs_cb_emu DESTINATION lib)
 endif()
 
+### Build cuda kernels as library ###
+add_library(MyCudaLib SHARED src/mapping/int_mapper/int_ii.cu)
+set_target_properties(MyCudaLib PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+)
 
 ### Build Int library ###
 if(BUILD_LIB_ACS_INT)
@@ -109,6 +114,8 @@ if(BUILD_LIB_ACS_INT)
     pybind11_add_module(acs_int SHARED ${SOURCES_INT})
     include_directories(inc extern/json/include)
     target_link_libraries(acs_int PRIVATE nlohmann_json::nlohmann_json pybind11::module)
+    # link cuda kernel lib
+    target_link_libraries(acs_int PRIVATE MyCudaLib)
     if (COVERAGE)
         target_compile_options(acs_int PRIVATE -fprofile-arcs -ftest-coverage)
         target_link_libraries(acs_int PRIVATE gcov)

@@ -87,6 +87,52 @@ void MapperIntII::d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
     }
 }
 
+extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
+                      const float *mat_A_m, const int32_t *mat_B, int m, int k,
+                      int n);
+
+void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                        int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
+
+    // Convert ia_p/m vectors into float arrays (probably expensive)
+    int rows = ia_p_.size();
+    int cols = ia_p_[0].size();
+
+    std::vector<float> contiguous_p;
+    std::vector<float> contiguous_m;
+    contiguous_p.reserve(rows * cols); // rows * cols = 3072 = 32 * 32 * 3(Split)
+    contiguous_m.reserve(rows * cols);
+
+    // Only copy relevant parts of xbar (rest 0 anyway and would break indexing in kernel)
+    for (int i = 0; i < std::min(rows, 3 * m_matrix); i++) {
+        for (int j = 0; j < std::min(cols, k_matrix); j++) {
+            std::cout << "i: " << i << ", j: " << j << ": A_p: " << ia_p_[i][j] << std::endl;
+            contiguous_p.push_back(ia_p_[i][j]);
+            contiguous_m.push_back(ia_m_[i][j]);
+        }
+    }
+
+    float* ptr_p = contiguous_p.data();
+    float* ptr_m = contiguous_m.data();
+
+    // Dispatch kernel execution
+    float resf[m_matrix * n_matrix] = {0.0f};
+    std::cout << "Sum_w: " << std::endl;
+    for (auto w : sum_w_) {
+        std::cout << ", " << w << std::endl;
+    }
+
+    std::cout << "Res before launch:" << std::endl;
+    for(int i = 0; i < 3; i++) {
+        for(int j = 0; j < 3; j++) {
+            std::cout << ", " << res[i * 3 +j];
+        }
+    }
+
+    a_mmm_launch(res, ptr_p, ptr_m, mat_B, m_matrix, k_matrix, n_matrix); // Split not included 
+}
+
+/*
 void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                         int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
     // The splitted matrix is of size CFG.SPLITsize*M x N (CFG.SPLITsize values
@@ -105,12 +151,12 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
         // For each bit in vd_p execute one MVM operation with ia_p_ and one with
         // ia_m_ MSB of input has position: CFG.I_BIT + 1 Subract both results in
         // the analog domain
-        for (size_t i_bit = 0; i_bit < CFG.I_BIT + 1; ++i_bit) {
+        for (size_t i_bit = 0; i_bit < CFG.I_BIT + 1; ++i_bit) { //TO-DO: Nur bis I_BIT laufen lassen + checks einführen, dass B beim hochshift nicht overflowt
             // Calculcate multiplications with negative and positive weights
             for (size_t t_m = 0; t_m < tmp_size; ++t_m) {
                 for (size_t k = 0; k < k_matrix; ++k) {
                     tmp_out_fp_[t_m] +=
-                        (ia_p_[t_m][k] - ia_m_[t_m][k]) * ((vd_p_[k] >> i_bit) & 1);
+                        (ia_p_[t_m][k] - ia_m_[t_m][k]) * ((vd_p_[k] >> i_bit) & 1); // Is this distributable, so can it be reduced to a single shift? Maybe not benefitial
                 }
             }
 
@@ -134,7 +180,7 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
             res[m * n_matrix + n] -= ((sum_w_)[m] << (CFG.I_BIT - 1));
         }
     }
-}
+}*/
 
 void MapperIntII::a_mvm(int32_t *res, const int32_t *vec, const int32_t *mat,
                         int32_t m_matrix, int32_t n_matrix) {

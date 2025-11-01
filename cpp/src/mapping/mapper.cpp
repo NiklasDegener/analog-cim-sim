@@ -231,7 +231,7 @@ void Mapper::a_write_p_m(int32_t m_matrix, int32_t n_matrix) {
     for (size_t m = 0; m < m_matrix * num_segments_; ++m) {
         float step = i_step_size_[m % num_segments_];
         for (size_t n = 0; n < n_matrix; ++n) {
-            ia_p_[m][n] = gd_p_[m][n] * step + hrs;
+            ia_p_[m][n] = gd_p_[m][n] * step + hrs; // TODO: Add noise for cell variability here as well
             ia_m_[m][n] = gd_m_[m][n] * step + hrs;
         }
     }
