@@ -42,7 +42,7 @@ __device__ __forceinline__ float analog_digital_conversion(float current) {
 */
 __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                            const float *mat_A_m, const int32_t *mat_B,
-                           int32_t *res) {
+                           int32_t *res, int32_t *sum_w_) {
     unsigned int bx = blockIdx.x;
     unsigned int by = blockIdx.y;
 
@@ -57,7 +57,7 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
     // Offset to row=0 and col=bx in mat_B
     int mat_B_tile_offs = BN_06 * bx;
     // Offset to row=by and col=0 in mat_A
-    int mat_A_tile_offs = BM_06 * K * by;
+    int mat_A_tile_offs = SPLIT_SIZE * BM_06 * K * by;
 
     // Shared-memory buffers for mat_A and mat_B tiles
     __shared__ float mat_As_p[SPLIT_SIZE * BM_06 * BK_06];
@@ -69,13 +69,16 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
         // Each thread loads SPLIT_SIZE * TM_06 values into mat_As_p and mat_As_m
         for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
             bool notExceedingK = (k + (WN_06 / TN_06) * wx + tx < K); // WN/TN is amount of y-threads inside warp. Correct
-            bool notExceedingM = (BM_06 * by + WM_06 * wy + TM_06 * ty + tm < SPLIT_SIZE * M); // Also correct, just sum of hierarchy along y-axis
+            bool notExceedingM =
+                (SPLIT_SIZE * (BM_06 * by + WM_06 * wy + TM_06 * ty) + tm <
+                 SPLIT_SIZE *
+                     M); // Also correct, just sum of hierarchy along y-axis
 
-            int dest = BK_06 * (WM_06 * wy + TM_06 * ty + tm) +
-                         (WN_06 / TN_06) * wx + tx;
+            int dest = BK_06 * (SPLIT_SIZE * (WM_06 * wy + TM_06 * ty) + tm) +
+                       (WN_06 / TN_06) * wx + tx;
             int src = mat_A_tile_offs +
-                            K * (WM_06 * wy + TM_06 * ty + tm) +
-                            (WN_06 / TN_06) * wx + tx;
+                      K * (SPLIT_SIZE * (WM_06 * wy + TM_06 * ty) + tm) +
+                      (WN_06 / TN_06) * wx + tx;
 
             if (notExceedingK && notExceedingM) {
                 mat_As_p[dest] =
@@ -119,11 +122,9 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                     // This vector stores sizes for all different cells.
         int32_t shift_[] = {7, 4, 0};
 
-        int32_t sum_w_[] = {-3,1,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
-
         // *******************************************************************
         // ***** This part will be discussed in "docs/01_register_blocking.md"
-        for (int tm = 0; tm < 3 * TM_06; ++tm) {
+        for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
             for (int tn = 0; tn < TN_06; ++tn) {
                 for (int bk = 0; bk < BK_06; ++bk) {
 
@@ -133,7 +134,7 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                             (b_val >>
                              i_bit) &
                             1;
-                        int A_idx = BK_06 * (WM_06 * wy + TM_06 * ty + tm) +
+                        int A_idx = BK_06 * (SPLIT_SIZE * (WM_06 * wy + TM_06 * ty) + tm) +
                                      bk;
                         float diff =
                             mat_As_p[A_idx] -
@@ -150,7 +151,7 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                                 i_step_size_[tm % SPLIT_SIZE] * std::pow(2, shift_[tm % SPLIT_SIZE]) *
                                 std::pow(2, i_bit)));
                     // Watchout to only write 3 elements in tmp
-                    tmp[tm/3][tn] += cast;
+                    tmp[tm/SPLIT_SIZE][tn] += cast;
                 }
             }
         }
@@ -161,10 +162,10 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
             for (int tn = 0; tn < TN_06; ++tn) {
 
                 // Subtract compile time constant
-                tmp[tm][tn] -= ((sum_w_)[tm] << (I_BIT - 1));
+                tmp[tm][tn] -= ((sum_w_)[BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
 
                 bool condition1 = (bx * BN_06 + WN_06 * wx + TN_06 * tx + tn < N); // correct
-                bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < SPLIT_SIZE * M); // correct
+                bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < M); // correct
                 if (condition1 &&
                     condition2) {
                     // Again, plain copying to C matrix
@@ -181,16 +182,16 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
 
 // This is a regular C++ function you can call from outside
 extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
-                      const float *mat_A_m, const int32_t *mat_B, int m, int k,
-                      int n) {
+                             const float *mat_A_m, const int32_t *mat_B, int m,
+                             int k, int n, int32_t *sum_w_) {
     float *d_a_p, *d_a_m;
-    int32_t *d_b, *d_c;
+    int32_t *d_b, *d_c, *d_sum_w_;
 
     cudaMalloc(&d_a_p, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_a_m, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_b, n * k * sizeof(int32_t));
-    //cudaMalloc(&d_c, m * n * sizeof(int32_t));
     cudaMalloc(&d_c, m * n * sizeof(int32_t));
+    cudaMalloc(&d_sum_w_, 32 * sizeof(int32_t));
 
     std::cout << "m: " << m << ", k: " << k << std::endl;
     std::cout << "Cu: mat_A_p[64]: " << mat_A_p[2 * 3] << std::endl;
@@ -200,18 +201,19 @@ extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
     cudaMemcpy(d_a_m, mat_A_m, m * k * SPLIT_SIZE * sizeof(float),
                cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, mat_B, n * k * sizeof(int32_t), cudaMemcpyHostToDevice);
-    // Why doesn't this work?
     cudaMemcpy(d_c, res, m * n * sizeof(int32_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sum_w_, sum_w_, 32 * sizeof(int32_t), cudaMemcpyHostToDevice);
 
-    dim3 gridDim_06(CEIL_DIV(n, BN_06), CEIL_DIV(m * SPLIT_SIZE, BM_06), 1);
+    dim3 gridDim_06(CEIL_DIV(n, BN_06), CEIL_DIV(m, BM_06), 1);
     std::cout << "Blockcount: " << gridDim_06.x * gridDim_06.y * gridDim_06.z << std::endl;
     dim3 blockDim_06(BN_06 / TN_06, BM_06 / TM_06, 1);
     std::cout << "Threadcount: " << blockDim_06.x * blockDim_06.y * blockDim_06.z << std::endl;
-    mmm_kernel<<<gridDim_06, blockDim_06>>>(m, n, k, d_a_p, d_a_m, d_b, d_c);
+    mmm_kernel<<<gridDim_06, blockDim_06>>>(m, n, k, d_a_p, d_a_m, d_b, d_c, d_sum_w_);
 
-    cudaMemcpy(res, d_c, m * n * sizeof(int32_t), cudaMemcpyDeviceToHost);
+    cudaMemcpy(res, d_c, m * n * sizeof(int32_t),
+               cudaMemcpyDeviceToHost); // Memcpy call waits for kernel
+                                        // execution to finish
     float res2[m][n] = {0.0f};
-    //cudaMemcpy(res2, d_c, m * n * sizeof(float), cudaMemcpyDeviceToHost); // Memcpy call waits for kernel execution to finish
 
     std::cout << "m: " << m << ", n: " << n << std::endl;
     std::cout << "Res : " << std::endl;

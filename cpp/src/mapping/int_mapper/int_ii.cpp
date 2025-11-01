@@ -89,7 +89,7 @@ void MapperIntII::d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
 
 extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
                       const float *mat_A_m, const int32_t *mat_B, int m, int k,
-                      int n);
+                      int n, int32_t *sum_w_);
 
 void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                         int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
@@ -106,7 +106,7 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
     // Only copy relevant parts of xbar (rest 0 anyway and would break indexing in kernel)
     for (int i = 0; i < std::min(rows, 3 * m_matrix); i++) {
         for (int j = 0; j < std::min(cols, k_matrix); j++) {
-            std::cout << "i: " << i << ", j: " << j << ": A_p: " << ia_p_[i][j] << std::endl;
+            //std::cout << "i: " << i << ", j: " << j << ": A_m: " << ia_m_[i][j] << std::endl;
             contiguous_p.push_back(ia_p_[i][j]);
             contiguous_m.push_back(ia_m_[i][j]);
         }
@@ -129,7 +129,7 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
         }
     }
 
-    a_mmm_launch(res, ptr_p, ptr_m, mat_B, m_matrix, k_matrix, n_matrix); // Split not included 
+    a_mmm_launch(res, ptr_p, ptr_m, mat_B, m_matrix, k_matrix, n_matrix, sum_w_.data()); // Split not included 
 }
 
 /*
