@@ -64,6 +64,18 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
     __shared__ float mat_As_m[SPLIT_SIZE * BM_06 * BK_06];
     __shared__ int32_t mat_Bs[BK_06 * BN_06];
 
+    int32_t tmp[TM_06][TN_06] = {0};
+
+    // Temporary results of the TM_06xTN_06 mini-GEMM within a thread (for
+    // each bit)
+    float tmp_bits[TM_06 * SPLIT_SIZE][TN_06 * (I_BIT + 1)] = {0.0f};
+
+    float i_step_size_[] = {
+        25, 6.25,
+        3.125}; // Each step size depends on bits that are stored per cell.
+                // This vector stores sizes for all different cells.
+    int32_t shift_[] = {7, 4, 0};
+
     // k = {0, BK_06, 2*BK_06, ...}
     for (int k = 0; k < K; k += BK_06) {
         // Each thread loads SPLIT_SIZE * TM_06 values into mat_As_p and mat_As_m
@@ -111,17 +123,6 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
         mat_B_tile_offs += N * BK_06;
         __syncthreads();
 
-        // Temporary results of the TM_06xTN_06 mini-GEMM within a thread (for
-        // each bit)
-        float tmp_bits[TM_06 * SPLIT_SIZE][TN_06 * (I_BIT+1)] = {0.0f};
-        int32_t tmp[TM_06][TN_06] = {0};
-
-        float i_step_size_[] = {
-            25, 6.25,
-            3.125}; // Each step size depends on bits that are stored per cell.
-                    // This vector stores sizes for all different cells.
-        int32_t shift_[] = {7, 4, 0};
-
         // *******************************************************************
         // ***** This part will be discussed in "docs/01_register_blocking.md"
         for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
@@ -143,41 +144,48 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                         tmp_bits[tm][tn * I_BIT + i_bit] += diff * b_bit;
                     }
                 }
-                // ADC handling
-                for (size_t i_bit = 0; i_bit < I_BIT + 1; ++i_bit) {
-                    int32_t cast = static_cast<int32_t>(
-                        round(analog_digital_conversion(
-                                    tmp_bits[tm][tn * I_BIT + i_bit]) /
-                                i_step_size_[tm % SPLIT_SIZE] * std::pow(2, shift_[tm % SPLIT_SIZE]) *
-                                std::pow(2, i_bit)));
-                    // Watchout to only write 3 elements in tmp
-                    tmp[tm/SPLIT_SIZE][tn] += cast;
-                }
             }
         }
-        // *******************************************************************
-
-        // Each thread copies its part of the block to res
-        for (int tm = 0; tm < TM_06; ++tm) {
-            for (int tn = 0; tn < TN_06; ++tn) {
-
-                // Subtract compile time constant
-                tmp[tm][tn] -= ((sum_w_)[BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
-
-                bool condition1 = (bx * BN_06 + WN_06 * wx + TN_06 * tx + tn < N); // correct
-                bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < M); // correct
-                if (condition1 &&
-                    condition2) {
-                    // Again, plain copying to C matrix
-                    const unsigned int res_elem_addr =
-                        res_tile_offs + N * (WM_06 * wy + TM_06 * ty + tm) +
-                        WN_06 * wx + TN_06 * tx + tn;
-                    res[res_elem_addr] += tmp[tm][tn];
-                }
-            }
-        }
-        __syncthreads();
     }
+
+    // *******************************************************************
+
+    for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm ){
+        for (int tn = 0; tn < TN_06; ++tn) {
+            // ADC handling
+            for (size_t i_bit = 0; i_bit < I_BIT; ++i_bit) {
+                int32_t cast = static_cast<int32_t>(round(
+                    analog_digital_conversion(
+                        tmp_bits[tm][tn * I_BIT + i_bit]) /
+                    i_step_size_[tm % SPLIT_SIZE] *
+                    std::pow(2, shift_[tm % SPLIT_SIZE]) * std::pow(2, i_bit)));
+                    
+                // Watchout to only write 3 elements in tmp
+                tmp[tm / SPLIT_SIZE][tn] += cast;
+            }
+        }
+    }
+
+    // Each thread copies its part of the block to res
+    for (int tm = 0; tm < TM_06; ++tm) {
+        for (int tn = 0; tn < TN_06; ++tn) {
+
+            // Subtract compile time constant
+            tmp[tm][tn] -= ((sum_w_)[BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
+
+            bool condition1 = (bx * BN_06 + WN_06 * wx + TN_06 * tx + tn < N); // correct
+            bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < M); // correct
+            if (condition1 &&
+                condition2) {
+                // Again, plain copying to C matrix
+                const unsigned int res_elem_addr =
+                    res_tile_offs + N * (WM_06 * wy + TM_06 * ty + tm) +
+                    WN_06 * wx + TN_06 * tx + tn;
+                res[res_elem_addr] += tmp[tm][tn];
+            }
+        }
+    }
+    __syncthreads();
 }
 
 // This is a regular C++ function you can call from outside
