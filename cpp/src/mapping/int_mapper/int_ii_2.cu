@@ -26,6 +26,10 @@ constexpr float HRS = 5.0f;
 
 constexpr int CEIL_DIV(int a, int b) { return (a + b - 1) / b; }
 
+// New for version 2
+constexpr unsigned int XBAR_M = 32;
+constexpr unsigned int XBAR_N = 32;
+
 // Performs conversion of SYMADC
 __device__ __forceinline__ float analog_digital_conversion(float current) {
     float clip = fminf(fmaxf(current, ALPHA * MIN_CUR), ALPHA * MAX_CUR);
@@ -38,7 +42,7 @@ __device__ __forceinline__ float analog_digital_conversion(float current) {
    mapping. It is essentially a modified warp-tiled GEMM kernel without alpha
    and beta scalars.
 */
-__global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
+__global__ void mmm_combined_kernel(int M, int N, int K, const float *mat_A_p,
                            const float *mat_A_m, const int32_t *mat_B,
                            int32_t *res, int32_t *sum_w_) {
     unsigned int bx = blockIdx.x;
@@ -74,8 +78,26 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                 // This vector stores sizes for all different cells.
     int32_t shift_[] = {7, 4, 0};
 
+    int global_tx = bx * blockDim.x + threadIdx.x;
+
+    int global_tx_max = N/2-1;
+    int h_group_id = global_tx / (global_tx_max / ((float)K / XBAR_N));
+    int v_group_id = M / XBAR_M;
+
+    int k_offset = h_group_id * (XBAR_N / WN_06) *
+                   BK_06;
+
+    if (h_group_id > res[0]) {
+        res[0] = h_group_id;
+    }
+    if (k_offset > res[1]) {
+        res[1] = k_offset;
+    }
+    return;
+
     // k = {0, BK_06, 2*BK_06, ...}
-    for (int k = 0; k < K; k += BK_06) {
+    for (int k = k_offset; k < min(k_offset + (XBAR_N / WN_06) * BK_06, K);
+         k += BK_06) {
         // Each thread loads SPLIT_SIZE * TM_06 values into mat_As_p and mat_As_m
         for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
             bool notExceedingK = (k + (WN_06 / TN_06) * wx + tx < K); // WN/TN is amount of y-threads inside warp. Correct
@@ -126,7 +148,6 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
         for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
             for (int tn = 0; tn < TN_06; ++tn) {
                 for (int bk = 0; bk < BK_06; ++bk) {
-
                     for (size_t i_bit = 0; i_bit < I_BIT+1; ++i_bit) {
                         int32_t b_val = mat_Bs[BN_06 * bk + WN_06 * wx + TN_06 * tx + tn];
                         int32_t b_bit =
@@ -145,6 +166,15 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
             }
         }
     }
+
+    /*
+    if (global_tx == 16) {
+        res[0] = k_offset;
+        res[1] = min(k_offset + (XBAR_N / WN_06) * BK_06, K);
+        res[2] = SPLIT_SIZE * TM_06;
+        res[3] = TN_06;
+        res[4] = BK_06;
+    }*/
 
     // *******************************************************************
 
@@ -169,7 +199,7 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
         for (int tn = 0; tn < TN_06; ++tn) {
 
             // Subtract compile time constant
-            tmp[tm][tn] -= ((sum_w_)[BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
+            tmp[tm][tn] -= ((sum_w_)[h_group_id * M + BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
 
             bool condition1 = (bx * BN_06 + WN_06 * wx + TN_06 * tx + tn < N); // correct
             bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < M); // correct
@@ -180,6 +210,10 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
                     res_tile_offs + N * (WM_06 * wy + TM_06 * ty + tm) +
                     WN_06 * wx + TN_06 * tx + tn;
                 res[res_elem_addr] += tmp[tm][tn];
+                //res[res_elem_addr] = ((sum_w_)[h_group_id * M + BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
+                //res[res_elem_addr] = h_group_id;
+                //res[res_elem_addr] = global_tx;
+                //res[res_elem_addr] = 0;
             }
         }
     }
@@ -187,17 +221,22 @@ __global__ void mmm_kernel(int M, int N, int K, const float *mat_A_p,
 }
 
 // This is a regular C++ function you can call from outside
-extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
+extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
                              const float *mat_A_m, const int32_t *mat_B, int m,
                              int k, int n, int32_t *sum_w_) {
     float *d_a_p, *d_a_m;
     int32_t *d_b, *d_c, *d_sum_w_;
 
+    int num_h_groups = k / 32 + 1;
+
     cudaMalloc(&d_a_p, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_a_m, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_b, n * k * sizeof(int32_t));
     cudaMalloc(&d_c, m * n * sizeof(int32_t));
-    cudaMalloc(&d_sum_w_, 32 * sizeof(int32_t));
+    cudaMalloc(&d_sum_w_, m * num_h_groups * sizeof(int32_t));
+
+    //std::cout << "m: " << m << ", k: " << k << std::endl;
+    //std::cout << "Cu: mat_A_p[64]: " << mat_A_p[2 * 3] << std::endl;
 
     cudaMemcpy(d_a_p, mat_A_p, m * k * SPLIT_SIZE * sizeof(float),
                cudaMemcpyHostToDevice);
@@ -205,16 +244,28 @@ extern "C" void a_mmm_launch(int32_t *res, const float *mat_A_p,
                cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, mat_B, n * k * sizeof(int32_t), cudaMemcpyHostToDevice);
     cudaMemcpy(d_c, res, m * n * sizeof(int32_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_sum_w_, sum_w_, 32 * sizeof(int32_t), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sum_w_, sum_w_, m * num_h_groups * sizeof(int32_t),
+               cudaMemcpyHostToDevice);
 
     dim3 gridDim_06(CEIL_DIV(n, BN_06), CEIL_DIV(m, BM_06), 1);
+    //std::cout << "Blockcount: " << gridDim_06.x * gridDim_06.y * gridDim_06.z << std::endl;
     dim3 blockDim_06(BN_06 / TN_06, BM_06 / TM_06, 1);
-    mmm_kernel<<<gridDim_06, blockDim_06>>>(m, n, k, d_a_p, d_a_m, d_b, d_c, d_sum_w_);
+    //std::cout << "Threadcount: " << blockDim_06.x * blockDim_06.y * blockDim_06.z << std::endl;
+    mmm_combined_kernel<<<gridDim_06, blockDim_06>>>(m, n, k, d_a_p, d_a_m, d_b, d_c, d_sum_w_);
 
     cudaMemcpy(res, d_c, m * n * sizeof(int32_t),
                cudaMemcpyDeviceToHost); // Memcpy call waits for kernel
                                         // execution to finish
     float res2[m][n] = {0.0f};
+
+    /*std::cout << "m: " << m << ", n: " << n << std::endl;
+    std::cout << "Res : " << std::endl;
+    for(int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            std::cout << ", " << std::to_string(res[i*n+j]);
+        }
+        std::cout << std::endl;
+    }*/
 
     cudaFree(d_a_p);
     cudaFree(d_a_m);

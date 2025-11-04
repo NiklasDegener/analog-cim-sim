@@ -106,7 +106,6 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
     // Only copy relevant parts of xbar (rest 0 anyway and would break indexing in kernel)
     for (int i = 0; i < std::min(rows, 3 * m_matrix); i++) {
         for (int j = 0; j < std::min(cols, k_matrix); j++) {
-            //std::cout << "i: " << i << ", j: " << j << ": A_m: " << ia_m_[i][j] << std::endl;
             contiguous_p.push_back(ia_p_[i][j]);
             contiguous_m.push_back(ia_m_[i][j]);
         }
@@ -117,23 +116,45 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
 
     // Dispatch kernel execution
     float resf[m_matrix * n_matrix] = {0.0f};
-    std::cout << "Sum_w: " << std::endl;
-    for (auto w : sum_w_) {
-        std::cout << ", " << w << std::endl;
-    }
-
-    std::cout << "Res before launch:" << std::endl;
-    for(int i = 0; i < 3; i++) {
-        for(int j = 0; j < 3; j++) {
-            std::cout << ", " << res[i * 3 +j];
-        }
-    }
 
     a_mmm_launch(res, ptr_p, ptr_m, mat_B, m_matrix, k_matrix, n_matrix, sum_w_.data()); // Split not included 
 }
 
-/*
-void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
+                      const float *mat_A_m, const int32_t *mat_B, int m, int k,
+                      int n, int32_t *sum_w_);
+
+// Combined all groups into one mmm call
+void MapperIntII::a_mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                        int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
+
+    // Convert ia_p/m vectors into float arrays (probably expensive)
+    int rows = ia_p_.size();
+    int cols = ia_p_[0].size();
+
+    std::vector<float> contiguous_p;
+    std::vector<float> contiguous_m;
+    contiguous_p.reserve(rows * cols); // rows * cols = 3072 = 32 * 32 * 3(Split)
+    contiguous_m.reserve(rows * cols);
+
+    // Only copy relevant parts of xbar (rest 0 anyway and would break indexing in kernel)
+    for (int i = 0; i < std::min(rows, 3 * m_matrix); i++) {
+        for (int j = 0; j < std::min(cols, k_matrix); j++) {
+            contiguous_p.push_back(ia_p_[i][j]);
+            contiguous_m.push_back(ia_m_[i][j]);
+        }
+    }
+
+    float* ptr_p = contiguous_p.data();
+    float* ptr_m = contiguous_m.data();
+
+    // Dispatch kernel execution
+    float resf[m_matrix * n_matrix] = {0.0f};
+
+    a_mmm_combined_launch(res, ptr_p, ptr_m, mat_B, m_matrix, k_matrix, n_matrix, sum_w_.data()); // Split not included 
+}
+
+void MapperIntII::a_mmm_cpu(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                         int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
     // The splitted matrix is of size CFG.SPLITsize*M x N (CFG.SPLITsize values
     // per original matrix value) Two matrices exist: ia+ (ia_p_) and ia-
@@ -180,7 +201,7 @@ void MapperIntII::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B
             res[m * n_matrix + n] -= ((sum_w_)[m] << (CFG.I_BIT - 1));
         }
     }
-}*/
+}
 
 void MapperIntII::a_mvm(int32_t *res, const int32_t *vec, const int32_t *mat,
                         int32_t m_matrix, int32_t n_matrix) {

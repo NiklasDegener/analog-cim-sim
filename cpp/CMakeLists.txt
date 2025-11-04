@@ -64,7 +64,7 @@ if(BUILD_LIB_CB_EMU)
 endif()
 
 ### Build cuda kernels as library ###
-add_library(MyCudaLib SHARED src/mapping/int_mapper/int_ii.cu)
+add_library(MyCudaLib SHARED src/mapping/int_mapper/int_ii.cu src/mapping/int_mapper/int_ii_2.cu)
 set_target_properties(MyCudaLib PROPERTIES
     CUDA_SEPARABLE_COMPILATION ON
 )

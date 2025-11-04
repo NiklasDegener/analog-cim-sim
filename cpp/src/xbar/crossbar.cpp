@@ -173,6 +173,17 @@ void Crossbar::mvm(int32_t *res, const int32_t *vec, const int32_t *mat,
     }
 }
 
+void Crossbar::mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                   int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
+    mvm_counter_++;
+    consecutive_mvm_counter_++;
+    if (CFG.digital_only) {
+        mapper_->d_mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix);
+    } else {
+        mapper_->a_mmm_combined(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix);
+    }
+}
+
 void Crossbar::mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                    int32_t m_matrix, int32_t k_matrix, int32_t n_matrix) {
     mvm_counter_++;

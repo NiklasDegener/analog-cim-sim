@@ -28,6 +28,7 @@
 
 namespace nq {
 
+// Pass matrix sizes to allow deviation from xbar size
 Mapper::Mapper(bool is_diff_weight_mapping) :
     is_diff_weight_mapping_(is_diff_weight_mapping),
     gd_p_(CFG.M * CFG.SPLIT.size(), std::vector<int32_t>(CFG.N, 0)),
@@ -110,28 +111,43 @@ std::unique_ptr<Mapper> Mapper::create_from_config() {
     }
 }
 
+// TODO: Rename this, is called for analog mappings as well
 void Mapper::d_write_diff(const int32_t *mat, int32_t m_matrix,
                           int32_t n_matrix) {
     const std::vector<uint32_t> &split = CFG.SPLIT;
-    for (size_t m = 0; m < m_matrix; ++m) {
-        int32_t sum_n = 0;
-        for (size_t n = 0; n < n_matrix; ++n) {
-            int mat_val = mat[n_matrix * m + n];
-            sum_n += mat_val;
-            for (size_t s = 0; s < split.size(); ++s) {
-                int gd_idx = m * split.size() + s;
-                if (mat_val >= 0) {
-                    gd_p_[gd_idx][n] =
-                        (mat_val >> shift_[s]) & ((1 << split[s]) - 1);
-                    gd_m_[gd_idx][n] = 0;
-                } else {
-                    gd_p_[gd_idx][n] = 0;
-                    gd_m_[gd_idx][n] =
-                        (-mat_val >> shift_[s]) & ((1 << split[s]) - 1);
+
+    int num_vg = ceil((float)n_matrix / CFG.N);
+    // Resize gd_p/m & sum_w if necessary. Needed for combined call
+    if (m_matrix > CFG.M || n_matrix > CFG.N) {
+        gd_p_ = std::vector(m_matrix* CFG.SPLIT.size(), std::vector<int32_t>(n_matrix, 0));
+        gd_m_ = std::vector(m_matrix* CFG.SPLIT.size(), std::vector<int32_t>(n_matrix, 0));
+        sum_w_ = std::vector<int32_t>(m_matrix * num_vg, 0);
+    }
+
+    //std::cout << "Num vg: " << num_vg << std::endl;
+
+    // Calculate sum_w_ per horizontal group
+    for (size_t vg = 0; vg < num_vg; vg++) {
+        for (size_t m = 0; m < m_matrix; ++m) {
+            int32_t sum_n = 0;
+            for (size_t n = vg * CFG.N; n < std::min((unsigned long) n_matrix, (vg+1) * CFG.N); ++n) {
+                int mat_val = mat[n_matrix * m + n];
+                sum_n += mat_val;
+                for (size_t s = 0; s < split.size(); ++s) {
+                    int gd_idx = m * split.size() + s;
+                    if (mat_val >= 0) {
+                        gd_p_[gd_idx][n] =
+                            (mat_val >> shift_[s]) & ((1 << split[s]) - 1);
+                        gd_m_[gd_idx][n] = 0;
+                    } else {
+                        gd_p_[gd_idx][n] = 0;
+                        gd_m_[gd_idx][n] =
+                            (-mat_val >> shift_[s]) & ((1 << split[s]) - 1);
+                    }
                 }
             }
+            sum_w_[vg * m_matrix + m] = sum_n;
         }
-        sum_w_[m] = sum_n;
     }
 }
 
@@ -228,6 +244,14 @@ void Mapper::d_write_tc_tnn(const int32_t *mat, int32_t m_matrix,
 
 void Mapper::a_write_p_m(int32_t m_matrix, int32_t n_matrix) {
     float hrs = CFG.HRS;
+
+    int num_hg = ceil((float)n_matrix / CFG.N);
+    // Resize gd_p/m & sum_w if necessary. Needed for combined call
+    if (m_matrix > CFG.M || n_matrix > CFG.N) {
+        ia_p_ = std::vector(m_matrix* CFG.SPLIT.size(), std::vector<float>(n_matrix, 0));
+        ia_m_ = std::vector(m_matrix* CFG.SPLIT.size(), std::vector<float>(n_matrix, 0));
+    }
+
     for (size_t m = 0; m < m_matrix * num_segments_; ++m) {
         float step = i_step_size_[m % num_segments_];
         for (size_t n = 0; n < n_matrix; ++n) {
@@ -452,6 +476,11 @@ void Mapper::d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
 void Mapper::a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                        int32_t m_matrix, int32_t n_matrix, int32_t k_matrix){
     throw std::runtime_error("Analog MMM not implemented for chosen mapping!");
+}
+
+void Mapper::a_mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+                       int32_t m_matrix, int32_t n_matrix, int32_t k_matrix){
+    throw std::runtime_error("Analog combined MMM not implemented for chosen mapping!");
 }
 
 bool Mapper::is_diff_weight_mapping() const { return is_diff_weight_mapping_; }

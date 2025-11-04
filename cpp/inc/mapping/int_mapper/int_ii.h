@@ -30,7 +30,11 @@ class MapperIntII : public Mapper {
                int32_t m_matrix, int32_t n_matrix) override;
     void d_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                int32_t m_matrix, int32_t n_matrix, int32_t k_matrix) override;
+    void a_mmm_cpu(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+               int32_t m_matrix, int32_t n_matrix, int32_t k_matrix);
     void a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+               int32_t m_matrix, int32_t n_matrix, int32_t k_matrix) override;
+    void a_mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                int32_t m_matrix, int32_t n_matrix, int32_t k_matrix) override;
 
   private:

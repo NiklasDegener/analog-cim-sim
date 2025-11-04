@@ -27,6 +27,8 @@ class Crossbar {
              int32_t m_matrix, int32_t n_matrix);
     void mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
              int32_t m_matrix, int32_t k_matrix, int32_t n_matrix);
+    void mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+             int32_t m_matrix, int32_t k_matrix, int32_t n_matrix);
     const std::vector<std::vector<int32_t>> &get_gd_p() const;
     const std::vector<std::vector<int32_t>> &get_gd_m() const;
     const std::vector<std::vector<float>> &get_ia_p() const;

@@ -202,6 +202,40 @@ extern "C" EXPORT_API int32_t cpy_mtrx(int32_t *mat, int32_t m_matrix,
     return 0;
 }
 
+extern "C" EXPORT_API int32_t cpy_mtrx_combined(int32_t *mat, int32_t m_matrix,
+                                       int32_t n_matrix,
+                                       const char *l_name = "Unkown") {
+#ifdef DEBUG_MODE
+    std::cout << "Matrix copy" << std::endl;
+    std::cout << "Layer: " << l_name << std::endl;
+// Find max and min values in the matrix
+#include <cstdint>
+    int32_t max_val = INT32_MIN;
+    int32_t min_val = INT32_MAX;
+    for (int i = 0; i < m_matrix; ++i) {
+        for (int j = 0; j < n_matrix; ++j) {
+            int32_t val = mat[i * n_matrix + j];
+            if (val > max_val)
+                max_val = val;
+            if (val < min_val)
+                min_val = val;
+        }
+    }
+    std::cout << "Matrix dimensions: " << m_matrix << "x" << n_matrix
+              << std::endl;
+    std::cout << "Max value: " << max_val << ", Min value: " << min_val
+              << std::endl;
+#endif
+    if (xbar == nullptr) {
+        std::cerr << "Error: Crossbar is not initialized. Please call "
+                     "set_config() first."
+                  << std::endl;
+        return -1;
+    }
+    xbar->write(mat, m_matrix, n_matrix);
+    return 0;
+}
+
 extern "C" EXPORT_API const void *get_gd_p(size_t *size) {
     check_pointer(size);
     check_xbar();
@@ -317,11 +351,34 @@ int32_t exe_mmm_pb(pybind11::array_t<int32_t> res,
     return 0;
 }
 
+int32_t exe_mmm_combined_pb(pybind11::array_t<int32_t> res,
+                   pybind11::array_t<int32_t> mat_A,
+                   pybind11::array_t<int32_t> mat_B, int32_t m_matrix,
+                   int32_t k_matrix, int32_t n_matrix) {
+    auto res_buffer = res.request();
+    auto mat_A_buffer = mat_A.request();
+    auto mat_B_buffer = mat_B.request();
+
+    int32_t *res_ptr = static_cast<int32_t *>(res_buffer.ptr);
+    int32_t *mat_A_ptr = static_cast<int32_t *>(mat_A_buffer.ptr);
+    int32_t *mat_B_ptr = static_cast<int32_t *>(mat_B_buffer.ptr);
+
+    xbar->mmm_combined(res_ptr, mat_A_ptr, mat_B_ptr, m_matrix, k_matrix, n_matrix);
+    return 0;
+}
+
 int32_t cpy_mtrx_pb(pybind11::array_t<int32_t> mat, int32_t m_matrix,
                     int32_t n_matrix) {
     auto mat_buffer = mat.request();
     int32_t *mat_ptr = static_cast<int32_t *>(mat_buffer.ptr);
     return cpy_mtrx(mat_ptr, m_matrix, n_matrix);
+}
+
+int32_t cpy_mtrx_combined_pb(pybind11::array_t<int32_t> mat, int32_t m_matrix,
+                    int32_t n_matrix) {
+    auto mat_buffer = mat.request();
+    int32_t *mat_ptr = static_cast<int32_t *>(mat_buffer.ptr);
+    return cpy_mtrx_combined(mat_ptr, m_matrix, n_matrix);
 }
 
 pybind11::array_t<uint32_t> get_gd_p_pb() {
@@ -509,7 +566,9 @@ EXPORT_API const std::vector<std::vector<uint64_t>> &get_consecutive_reads_m() {
 PYBIND11_MODULE(acs_int, m) {
     m.def("cpy", &cpy_mtrx_pb, "Copy matrix to crossbar.");
     m.def("mvm", &exe_mvm_pb, "Execute matrix-vector multiplication.");
-    m.def("mmm", &exe_mmm_pb, "Execute matrix-vector multiplication.");
+    m.def("mmm", &exe_mmm_pb, "Execute matrix multiplication.");
+    m.def("cpy_combined", &cpy_mtrx_combined_pb, "Copy combined matrix to crossbar.");
+    m.def("mmm_combined", &exe_mmm_combined_pb, "Execute combined matrix multiplication.");
     m.def("set_config", &set_config, "Set a config for the crossbar.");
     m.def("update_config", &update_config_pb,
           "Update configuration from JSON string.");

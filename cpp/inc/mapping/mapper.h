@@ -35,6 +35,8 @@ class Mapper {
                        int32_t m_matrix, int32_t k_matrix, int32_t n_matrix);
     virtual void a_mmm(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
                        int32_t m_matrix, int32_t k_matrix, int32_t n_matrix);
+    virtual void a_mmm_combined(int32_t *res, const int32_t *mat_A, const int32_t *mat_B,
+               int32_t m_matrix, int32_t n_matrix, int32_t k_matrix);
     static std::unique_ptr<Mapper> create_from_config();
     const std::vector<std::vector<int32_t>> &get_gd_p() const;
     const std::vector<std::vector<int32_t>> &get_gd_m() const;
