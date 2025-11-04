@@ -68,6 +68,9 @@ __global__ void mmm_combined_kernel(int M, int N, int K, const float *mat_A_p,
 
     int32_t tmp[TM_06][TN_06] = {0};
 
+    // This is used for the summation across vertical groups
+    int32_t tmp_vg[TM_06][TN_06] = {0};
+
     // Temporary results of the TM_06xTN_06 mini-GEMM within a thread (for
     // each bit)
     float tmp_bits[TM_06 * SPLIT_SIZE][TN_06 * (I_BIT + 1)] = {0.0f};
@@ -78,26 +81,13 @@ __global__ void mmm_combined_kernel(int M, int N, int K, const float *mat_A_p,
                 // This vector stores sizes for all different cells.
     int32_t shift_[] = {7, 4, 0};
 
-    int global_tx = bx * blockDim.x + threadIdx.x;
+    int global_tx = bx * blockDim.x + threadIdx.y;
+    int global_ty = by * blockDim.y + threadIdx.y;
 
-    int global_tx_max = N/2-1;
-    int h_group_id = global_tx / (global_tx_max / ((float)K / XBAR_N));
-    int v_group_id = M / XBAR_M;
-
-    int k_offset = h_group_id * (XBAR_N / WN_06) *
-                   BK_06;
-
-    if (h_group_id > res[0]) {
-        res[0] = h_group_id;
-    }
-    if (k_offset > res[1]) {
-        res[1] = k_offset;
-    }
-    return;
+    int vgroup_id = 0;
 
     // k = {0, BK_06, 2*BK_06, ...}
-    for (int k = k_offset; k < min(k_offset + (XBAR_N / WN_06) * BK_06, K);
-         k += BK_06) {
+    for (int k = 0; k < K; k += BK_06) {
         // Each thread loads SPLIT_SIZE * TM_06 values into mat_As_p and mat_As_m
         for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
             bool notExceedingK = (k + (WN_06 / TN_06) * wx + tx < K); // WN/TN is amount of y-threads inside warp. Correct
@@ -165,41 +155,47 @@ __global__ void mmm_combined_kernel(int M, int N, int K, const float *mat_A_p,
                 }
             }
         }
-    }
+        // *******************************************************************
+        // Only do ADC handling at end of each v_group
 
-    /*
-    if (global_tx == 16) {
-        res[0] = k_offset;
-        res[1] = min(k_offset + (XBAR_N / WN_06) * BK_06, K);
-        res[2] = SPLIT_SIZE * TM_06;
-        res[3] = TN_06;
-        res[4] = BK_06;
-    }*/
-
-    // *******************************************************************
-
-    for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm ){
-        for (int tn = 0; tn < TN_06; ++tn) {
-            // ADC handling
-            for (size_t i_bit = 0; i_bit < I_BIT; ++i_bit) {
-                int32_t cast = static_cast<int32_t>(round(
-                    analog_digital_conversion(
-                        tmp_bits[tm][tn * I_BIT + i_bit]) /
-                    i_step_size_[tm % SPLIT_SIZE] *
-                    std::pow(2, shift_[tm % SPLIT_SIZE]) * std::pow(2, i_bit)));
-                    
-                // Watchout to only write 3 elements in tmp
-                tmp[tm / SPLIT_SIZE][tn] += cast;
+        if (k == (vgroup_id + 1) * XBAR_N - BK_06) {
+            for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm ){
+                for (int tn = 0; tn < TN_06; ++tn) {
+                    // ADC handling
+                    for (size_t i_bit = 0; i_bit < I_BIT; ++i_bit) {
+                        int32_t cast = static_cast<int32_t>(round(
+                            analog_digital_conversion(
+                                tmp_bits[tm][tn * I_BIT + i_bit]) /
+                            i_step_size_[tm % SPLIT_SIZE] *
+                            std::pow(2, shift_[tm % SPLIT_SIZE]) * std::pow(2, i_bit)));
+                            
+                        // Watchout to only write 3 elements in tmp
+                        tmp[tm / SPLIT_SIZE][tn] += cast;
+                    }
+                }
             }
+
+            for (int tm = 0; tm < TM_06; ++tm) {
+                for (int tn = 0; tn < TN_06; ++tn) {
+                    // Subtract compile time constant (take vgroup into account)
+                    tmp_vg[tm][tn] += tmp[tm][tn] - ((sum_w_)[vgroup_id * M + BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
+                }
+            }
+            // Reset tmp_bits and temp (reused across vgroup)
+            for (int tm = 0; tm < SPLIT_SIZE * TM_06; ++tm) {
+                for (int tn = 0; tn < TN_06*(I_BIT+1); ++tn) {
+                    tmp[tm/SPLIT_SIZE][tn/(I_BIT+1)] = 0;
+                    tmp_bits[tm][tn] = 0;
+                }
+            }
+            vgroup_id++;
         }
-    }
+
+    } // End of k-loop
 
     // Each thread copies its part of the block to res
     for (int tm = 0; tm < TM_06; ++tm) {
         for (int tn = 0; tn < TN_06; ++tn) {
-
-            // Subtract compile time constant
-            tmp[tm][tn] -= ((sum_w_)[h_group_id * M + BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
 
             bool condition1 = (bx * BN_06 + WN_06 * wx + TN_06 * tx + tn < N); // correct
             bool condition2 = (by * BM_06 + WM_06 * wy + TM_06 * ty + tm < M); // correct
@@ -209,11 +205,7 @@ __global__ void mmm_combined_kernel(int M, int N, int K, const float *mat_A_p,
                 const unsigned int res_elem_addr =
                     res_tile_offs + N * (WM_06 * wy + TM_06 * ty + tm) +
                     WN_06 * wx + TN_06 * tx + tn;
-                res[res_elem_addr] += tmp[tm][tn];
-                //res[res_elem_addr] = ((sum_w_)[h_group_id * M + BM_06 * by + WM_06 * wy + TM_06 * ty + tm] << (I_BIT - 1));
-                //res[res_elem_addr] = h_group_id;
-                //res[res_elem_addr] = global_tx;
-                //res[res_elem_addr] = 0;
+                res[res_elem_addr] += tmp_vg[tm][tn];
             }
         }
     }
@@ -235,9 +227,6 @@ extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
     cudaMalloc(&d_c, m * n * sizeof(int32_t));
     cudaMalloc(&d_sum_w_, m * num_h_groups * sizeof(int32_t));
 
-    //std::cout << "m: " << m << ", k: " << k << std::endl;
-    //std::cout << "Cu: mat_A_p[64]: " << mat_A_p[2 * 3] << std::endl;
-
     cudaMemcpy(d_a_p, mat_A_p, m * k * SPLIT_SIZE * sizeof(float),
                cudaMemcpyHostToDevice);
     cudaMemcpy(d_a_m, mat_A_m, m * k * SPLIT_SIZE * sizeof(float),
@@ -248,24 +237,12 @@ extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
                cudaMemcpyHostToDevice);
 
     dim3 gridDim_06(CEIL_DIV(n, BN_06), CEIL_DIV(m, BM_06), 1);
-    //std::cout << "Blockcount: " << gridDim_06.x * gridDim_06.y * gridDim_06.z << std::endl;
     dim3 blockDim_06(BN_06 / TN_06, BM_06 / TM_06, 1);
-    //std::cout << "Threadcount: " << blockDim_06.x * blockDim_06.y * blockDim_06.z << std::endl;
     mmm_combined_kernel<<<gridDim_06, blockDim_06>>>(m, n, k, d_a_p, d_a_m, d_b, d_c, d_sum_w_);
 
     cudaMemcpy(res, d_c, m * n * sizeof(int32_t),
                cudaMemcpyDeviceToHost); // Memcpy call waits for kernel
                                         // execution to finish
-    float res2[m][n] = {0.0f};
-
-    /*std::cout << "m: " << m << ", n: " << n << std::endl;
-    std::cout << "Res : " << std::endl;
-    for(int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) {
-            std::cout << ", " << std::to_string(res[i*n+j]);
-        }
-        std::cout << std::endl;
-    }*/
 
     cudaFree(d_a_p);
     cudaFree(d_a_m);
