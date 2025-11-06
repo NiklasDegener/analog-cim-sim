@@ -219,13 +219,13 @@ extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
     float *d_a_p, *d_a_m;
     int32_t *d_b, *d_c, *d_sum_w_;
 
-    int num_h_groups = k / 32 + 1;
+    int num_v_groups = k / 32 + 1;
 
     cudaMalloc(&d_a_p, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_a_m, m * k * SPLIT_SIZE * sizeof(float));
     cudaMalloc(&d_b, n * k * sizeof(int32_t));
     cudaMalloc(&d_c, m * n * sizeof(int32_t));
-    cudaMalloc(&d_sum_w_, m * num_h_groups * sizeof(int32_t));
+    cudaMalloc(&d_sum_w_, m * num_v_groups * sizeof(int32_t));
 
     cudaMemcpy(d_a_p, mat_A_p, m * k * SPLIT_SIZE * sizeof(float),
                cudaMemcpyHostToDevice);
@@ -233,7 +233,7 @@ extern "C" void a_mmm_combined_launch(int32_t *res, const float *mat_A_p,
                cudaMemcpyHostToDevice);
     cudaMemcpy(d_b, mat_B, n * k * sizeof(int32_t), cudaMemcpyHostToDevice);
     cudaMemcpy(d_c, res, m * n * sizeof(int32_t), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_sum_w_, sum_w_, m * num_h_groups * sizeof(int32_t),
+    cudaMemcpy(d_sum_w_, sum_w_, m * num_v_groups * sizeof(int32_t),
                cudaMemcpyHostToDevice);
 
     dim3 gridDim_06(CEIL_DIV(n, BN_06), CEIL_DIV(m, BM_06), 1);

@@ -70,7 +70,7 @@ class TestAnalogMapping(unittest.TestCase):
         acs_int.cpy(mat_A, m_matrix, k_matrix)
         acs_int.mmm(res, mat_A, mat_B, m_matrix, k_matrix, n_matrix)
         np.testing.assert_array_equal(res, np.array([3, 21, -54, -9, 6, 3, -73, 41, 8], dtype=np.int32))
-        
+
         # Check that mvm via mmm is also correct
         n_matrix = 1
         mat = np.array([100, -32, 1, 0, 12, 1], dtype=np.int32)
@@ -80,6 +80,20 @@ class TestAnalogMapping(unittest.TestCase):
         acs_int.cpy(mat, m_matrix, k_matrix)
         acs_int.mmm(res, mat, vec, m_matrix, k_matrix, n_matrix)
         np.testing.assert_array_equal(res, np.array([-13759, -119, -1386], dtype=np.int32))
+
+
+        # Test big matrices
+        m_matrix = 32
+        k_matrix = 32
+        n_matrix = 32
+        np.random.seed(42)
+        mat_A = np.random.randint(-127, 127, size=(m_matrix, k_matrix))
+        mat_B = np.random.randint(-127, 127, size=(k_matrix, n_matrix))
+        res = np.zeros(m_matrix * n_matrix, dtype=np.int32)
+        
+        acs_int.cpy(mat_A.ravel(), m_matrix, k_matrix)
+        acs_int.mmm(res, mat_A.ravel(), mat_B.ravel(), m_matrix, k_matrix, n_matrix)
+        np.testing.assert_array_equal(res, np.dot(mat_A, mat_B).ravel())
 
     def test_analog_I_TC_W_DIFF(self):
         m_matrix = 3
